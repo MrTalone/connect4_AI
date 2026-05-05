@@ -37,6 +37,7 @@ def getOpenRow(board,col):
     for r in range(ROWS):
         if board [r][col]==' ':
             return r
+    return
 
 def printBoard(board):
     print(np.flip(board,0))

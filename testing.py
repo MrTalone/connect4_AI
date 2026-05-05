@@ -103,7 +103,7 @@ class Connect4Env:
         return PLAYER_PIECE if player == 0 else MODEL_PIECE
 
     def is_valid_move(self, col):
-        return 0 <= col < self.cols and self.board[self.rows-1][col] == ' '
+        return 0 <= col < self.co0ls and self.board[self.rows-1][col] == ' '
 
     def get_open_row(self, col):
         return getOpenRow(self.board, col)
