@@ -67,13 +67,20 @@ def draw_board(board):
     # Draw grid and holes
     for r in range(ROWS):
         for c in range(COLUMNS):
-            pygame.draw.rect(screen, BLUE,
-                             (c * SQUARE_SIZE, r * SQUARE_SIZE + SQUARE_SIZE,
-                              SQUARE_SIZE, SQUARE_SIZE))
-            pygame.draw.circle(screen, (0, 0, 0),
-                               (int(c * SQUARE_SIZE + SQUARE_SIZE/2),
-                                int(r * SQUARE_SIZE + SQUARE_SIZE + SQUARE_SIZE/2)),
-                               RADIUS)
+            pygame.draw.rect(
+                screen,
+                BLUE,
+                (c * SQUARE_SIZE, r * SQUARE_SIZE + SQUARE_SIZE,SQUARE_SIZE, SQUARE_SIZE)
+            )
+            pygame.draw.circle(
+                screen,
+                (0, 0, 0),
+                (
+                    int(c * SQUARE_SIZE + SQUARE_SIZE/2),
+                    int(r * SQUARE_SIZE + SQUARE_SIZE + SQUARE_SIZE/2)
+                ),
+                int(RADIUS)
+            )
     # Draw pieces
     for r in range(ROWS):
         for c in range(COLUMNS):
@@ -179,7 +186,7 @@ class Connect4Env:
         elif self._is_draw():
             self.done = True
             self.winner = None
-            reward = 0.0
+            reward = 0.5
         else:
             self.current_player = 1 - self.current_player
             reward = 0.0
@@ -340,7 +347,7 @@ if __name__ == "__main__":
                      
                             clock.tick(30)
                     elif SMART_MOVE:
-                        action = action = agent.get_action(state, valid_mask)
+                        action = agent.get_action(state, valid_mask)
                     else:
                         action = random_move(env)
 

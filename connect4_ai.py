@@ -43,13 +43,11 @@ SQUARE_SIZE = 100
 RADIUS = int(SQUARE_SIZE / 2 - 6)
 width = COLUMNS * SQUARE_SIZE
 height = (ROWS + 1) * SQUARE_SIZE
-my_font = pygame.font.SysFont('Arial', 30)
 
 # gameOver = False
 # userTurn = 0
 
 #------- helper functions to use later ---------
-
 #choose a random move that is valid (open collumn)
 # def isValidInput(board,col):
 #     return board[(ROWS-1)][col] == ' '
@@ -201,7 +199,7 @@ class Connect4Env:
         self.reset()
 
     def reset(self):
-        self.board = create_board()
+        self.board = np.full((ROWS, COLUMNS), ' ')
         self.current_player = np.random.randint(2)   # 0 = PLAYER_PIECE, 1 = MODEL_PIECE (agent) #randomply start with different players
         self.done = False
         self.winner=None
@@ -211,20 +209,34 @@ class Connect4Env:
 
     def get_state(self):
         #current player, opponent/model
-        #3 channels
+        #4 channels
         #   0 = player piece, 1 if filled, 0 otherwise
         #   1 = agent piece, 1 if filled, 0 otherwise
         #   2 = whose turn it is, 1 player, 0 agent
+        #   3 = column height (seeing when a column is almost full)
         #with addition row*collumn
-        #3*6*7 = 126 points per state
-        state = np.zeros((3,self.rows,self.cols),dtype = np.float32)
+        #4*6*7 = 168 points per state
+        state = np.zeros((4,self.rows,self.cols),dtype = np.float32)
+        height_channel = np.zeros((ROWS, COLUMNS))
         for r in range(self.rows):
             for c in range(self.cols):
+
                 if self.board[r][c] == self.piece_of_player(self.current_player):
                     state[0, r, c] = 1.0
                 elif self.board[r][c] == self.piece_of_player(1 - self.current_player):
                     state[1, r, c] = 1.0
         state[2,:,:] = 1.0 if self.current_player == 0 else 0.0        
+        
+        # Height channel: fill from bottom with 1s up to the current height
+        for c in range(self.cols):
+            height = 0
+            for r in range(self.rows):
+                if self.board[r][c] != ' ':
+                    height += 1
+            # Set the bottom 'height' cells to 1.0 (normalised height not needed because it's already 0..ROWS)
+            for r in range(height):
+                state[3, r, c] = 1.0
+        
         return state.ravel()
 
     def piece_of_player(self,player):
@@ -237,7 +249,11 @@ class Connect4Env:
         return self.board[(self.rows-1)][col] == ' '
 
     def get_open_row(self,col):
-        return getOpenRow(self.board,col)
+        for r in range(self.rows):
+            if self.board[r][col] == ' ':
+                return r
+        return -1
+        #return getOpenRow(self.board,col)
 
     def step(self,action):
         reward = 0.0
@@ -265,6 +281,11 @@ class Connect4Env:
 
         #piece = PLAYER_PIECE if self.current_player == 0 else MODEL_PIECE
         #dropPiece(self.board,row,action,piece)
+        #check for threats
+        if not self.done and piece == MODEL_PIECE:
+            three = self.count_threats(piece,3)
+            two = self.count_threats(piece,2)
+            reward += three * 0.1 + two * 0.02
 
         #check if the piece led to a win or is a draw, other wise let the ohter player play
         #connect 4 is turned bases
@@ -274,18 +295,18 @@ class Connect4Env:
             self.winner = piece
             if piece == MODEL_PIECE:
                 self.score[1]+=1
-                reward = 1.0
+                reward += 1.0
             else:
                 self.score[0] += 1
-                reward = -1.0
+                reward += -1.0
         elif self.isDraw():
             self.done = True
             self.winner=None
-            reward = 0.1#small reward for draw, better than loosing, worst than winning
+            reward += 0.1#small reward for draw, better than loosing, worst than winning
         else:
             #neither happened - game is still going
             self.current_player = 1 - self.current_player
-            reward = 0.0
+            reward += 0.0
 
         return self.get_state(), reward, self.done,self.winner
     
@@ -319,6 +340,49 @@ class Connect4Env:
     def isDraw(self):
         return np.all(self.board != ' ')
 
+    #time to add some more rewards (got some help from chat for counting how many are next to each other)    
+    #(asked chat for a threat count setup - purpose is to find how many oppent peices are next to eachother and try to block pot wins)
+    #very similar to win check
+    def count_threats(self, piece, length):
+        """Return number of times 'piece' appears exactly 'length' times consecutively
+        in any direction, and the line is not blocked by the same piece at either end."""
+        board = self.board
+        rows, cols = self.rows, self.cols
+        threats = 0
+        #if there is a section all as "PIECE" to a length
+        #Returns True: If every element in the iterable evaluates to True, or if the iterable is empty.Returns False: If even one element evaluates to False. (https://www.w3schools.com/python/ref_func_all.asp#:~:text=Module%20Reference,in%20a%20dictionary%20are%20True:)
+                
+        # Horizontal
+        for r in range(rows):
+            for c in range(cols - length + 1):
+                if all(board[r][c+i] == piece for i in range(length)):
+                    if (c == 0 or board[r][c-1] != piece) and (c+length == cols or board[r][c+length] != piece):
+                        threats += 1
+
+        # Vertical
+        for c in range(cols):
+            for r in range(rows - length + 1):
+                if all(board[r+i][c] == piece for i in range(length)):
+                    if (r == 0 or board[r-1][c] != piece) and (r+length == rows or board[r+length][c] != piece):
+                        threats += 1
+
+        # Diagonal down-right (\)
+        for r in range(rows - length + 1):
+            for c in range(cols - length + 1):
+                if all(board[r+i][c+i] == piece for i in range(length)):
+                    if ((r == 0 or c == 0 or board[r-1][c-1] != piece) and
+                        (r+length == rows or c+length == cols or board[r+length][c+length] != piece)):
+                        threats += 1
+
+        # Diagonal up-right (/)
+        for r in range(length-1, rows):
+            for c in range(cols - length + 1):
+                if all(board[r-i][c+i] == piece for i in range(length)):
+                    if ((r == rows-1 or c == 0 or board[r+1][c-1] != piece) and
+                        (r-length < 0 or c+length == cols or board[r-length][c+length] != piece)):
+                        threats += 1
+
+        return threats 
 
 #start env
 #make training loop
@@ -332,29 +396,24 @@ if __name__ == "__main__":
         #TRAINMODE = False
         RENDER = True
         RENDER_EACH_MOVE = True
-        agent = Connect4Agent(MODEL_FINAL_NAME)
+        agent = Connect4Agent(weights_path=MODEL_FINAL_NAME)
         print("HUMAN VS AI MODE")
     else:
-        agent = Connect4Agent(MODEL_TRAIN_NAME)
+        agent = Connect4Agent(weights_path=MODEL_TRAIN_NAME)
 
     #_________ START RENDER ___________
     if RENDER:
         pygame.init()
-        SQUARE_SIZE = 100
-        RADIUS = int(SQUARE_SIZE/2 - 6)
-        width = COLUMNS * SQUARE_SIZE
-        height = (ROWS + 1) * SQUARE_SIZE
-        screenSize = (width,height)
-        screen = pygame.display.set_mode(screenSize)
+        screen = pygame.display.set_mode((width, height))
         draw_board(env.board)
         pygame.display.update()
-        clock = pygame.time.Clock()   # good to control frame rate
+        clock = pygame.time.Clock()
     else:
         print("Running with no display")
 
 
     episodes = 0
-    point_result = [] # store points for finding win percent 1 = agent win, 0 = loss/draw
+    point_results = [] # store points for finding win percent 1 = agent win, 0 = loss/draw
 
     
     try:
@@ -371,9 +430,9 @@ if __name__ == "__main__":
                 if RENDER:
                     for event in pygame.event.get():
                         if event.type == pygame.QUIT:
-                            leaving = myfont.render("LEAVING",True, (255, 255, 255))
-                            screen.blit(text_surface, (50, 50))
-                            pygame.display.update()
+                            #leaving = myfont.render("LEAVING",True, (255, 255, 255))
+                            #screen.blit(text_surface, (50, 50))
+                            #pygame.display.update()
                             pygame.quit()
                             sys.exit()
 
@@ -385,7 +444,7 @@ if __name__ == "__main__":
                     action = agent.get_action(state, valid_mask)
                 else:#cpu or player
                     if PLAYER:
-                        userAction = None
+                        action = None
                         draw_board(env.board)
                         pygame.display.update()
 
@@ -430,7 +489,7 @@ if __name__ == "__main__":
                         action = random_move(env)
 
                 # Take a step in the environment
-                next_state, reward, done = env.step(action)
+                next_state, reward, done,winner = env.step(action)
                 
                 if RENDER_EACH_MOVE:
                     draw_board(env.board)
@@ -468,7 +527,7 @@ if __name__ == "__main__":
             if TRAINMODE and len(states) > 0:
                 # discount rewards (for future learning step)
                 discounted = discount_rewards(rewards)
-                loss=agent.train_step(states,actions,discounted)
+                loss=agent.training_step(states,actions,discounted)
 
             # ---------- LOGGING every 10 episodes (asked chat for some print) ----------
             if episodes % 10 == 0:
@@ -476,12 +535,12 @@ if __name__ == "__main__":
                 win_rate = np.mean(recent) * 100
                 total_wins = sum(point_results)
                 print(f"Episode {episodes} | Score CPU={env.score[0]} Agent={env.score[1]} | "
-                      f"Win% (last 10): {win_rate:.1f}% | Total wins: {total_wins} |total rewards: {total_reward = sum(rewards)}|"
+                      f"Win% (last 10): {win_rate:.1f}% | Total wins: {total_wins} |total rewards: {total_reward}|"
                       f"Loss: {loss}")
 
             # ---------- LOGGING every 100 episodes (asked chat for some print) ----------
             if episodes % 100 == 0:
-                SMART_MOVE = not SMART_MOVE
+                #SMART_MOVE = not SMART_MOVE
                 win_rate_100 = np.mean(point_results[-100:]) * 100 if len(point_results) >= 100 else 0
                 print(f"Points: {len(point_results)} | Score CPU={env.score[0]} Agent={env.score[1]} | "
                       f"Win% (last 100): {win_rate_100:.1f}%")
@@ -489,7 +548,7 @@ if __name__ == "__main__":
                 print("Checkpoint saved.")
     except KeyboardInterrupt:
         print("\nSaving final model and exiting...")
-        agent.save_model("Talon_Connect4_final.weights.h5")
+        agent.save_model(MODEL_FINAL_NAME)
         if RENDER:
             pygame.quit()
         sys.exit()

@@ -1,6 +1,6 @@
 import tensorflow as tf
 import numpy as np
-from tensorflow.keras.layers import Dense, Input, Dropout
+from tensorflow.keras.layers import Dense, Input, Dropout, Reshape, Conv2D, Flatten
 import os
 
 
@@ -9,39 +9,51 @@ COLUMNS = 7
 
 class Connect4Agent:
     def __init__(self,weights_path = None):
-        self.state_size = 3 * ROWS * COLUMNS
+        self.state_size = 4 * ROWS * COLUMNS
         self.num_actions = COLUMNS
         self.prev_state = None
 
         self.model = self.build_model()
         self.optimizer = tf.keras.optimizers.Adam(learning_rate=1e-4)
-        
+        print(20*"-")
         if weights_path and os.path.exists(weights_path):
             try:
                 self.model.load_weights(weights_path)
                 print(f"Agent: Weights loaded.")
             except Exception as e:
                 print(f"Agent: Failed to load weights: {e}")
-
+        else:
+            print("Agent: no existing weights, creating new model")
 
     def build_model(self):
         return tf.keras.Sequential([
-                Input(shape=(self.state_size,)),
-                Dense(16,activation='relu'),
-                Dense(64, activation='relu'),
-                Dense(128, activation='relu'),
-                Dense(128, activation='relu'),
-                Dropout(0.3),
-                
-                Dense(64, activation='relu'),
-                Dense(self.num_actions, activation='softmax')
-            ])
+            Input(shape=(self.state_size,)),
+            #Reshape((4,ROWS,COLUMNS)),
+            Reshape((ROWS, COLUMNS, 4)),
+            
+            Conv2D(32, 3, activation='relu'),  
+            Conv2D(64,3,activation='relu'),
+
+            Flatten(),
+            Dense(128, activation='relu'),
+            Dense(self.num_actions,activation='softmax')
+        ])
+        # return tf.keras.Sequential([
+        #         Input(shape=(self.state_size,)),
+        #         Dense(16,activation='relu'),
+        #         Dense(64, activation='relu'),
+        #         Dense(128, activation='relu'),
+        #         Dense(128, activation='relu'),
+        #         Dropout(0.3),
+
+        #         Dense(64, activation='relu'),
+        #         Dense(self.num_actions, activation='softmax')
+        #     ])
     
     
 
     def get_action(self,state,valid_moves):
-        state = np.array(state, dtype=np.float32)
-
+        state_input = np.array(state, dtype=np.float32).reshape(1, -1)  # (1, 168)
         # if self.prev_state is None:
         #     x = np.zeros_like(state)
         # else:
@@ -49,9 +61,9 @@ class Connect4Agent:
 
         # self.prev_state = state
 
-        probs = self.model(state[None, :], training=False).numpy()[0]
+        probs = self.model(state_input, training=False).numpy()[0]
 
-         # Mask invalid moves
+        # Mask invalid moves
         mask = np.array(valid_moves, dtype=np.float32)
         probs = probs * mask
 
@@ -104,6 +116,7 @@ class Connect4Agent:
 
     def save_model(self, path = "DEF.weights.h5"):
         self.model.save_weights(path)
+        print(f"Agent: Saved weights to {path}")
 
     def reset(self):
         self.prev_state = None
