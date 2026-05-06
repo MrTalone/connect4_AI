@@ -18,7 +18,7 @@ MODEL_FINAL_NAME = "Talon_Connect4_Final.weights.h5"
 #set if training, user is playing, or if cpu is playing from agent or random
 TRAINMODE = True
 SMART_MOVE = False #make oppnent run off an ai selection over random
-PLAYER = False #allow a player to play the game
+PLAYER =  False#allow a player to play the game
 
 #renders - note will be force to true if player is true
 RENDER = True
@@ -286,6 +286,10 @@ class Connect4Env:
             three = self.count_threats(piece,3)
             two = self.count_threats(piece,2)
             reward += three * 0.1 + two * 0.02
+        elif not self.done and piece == PLAYER_PIECE:
+            opponent_three = self.count_threats(piece, 3)
+            opponent_two = self.count_threats(piece, 2)
+            reward -= opponent_three * 0.15 + opponent_two * 0.03  # Penalty
 
         #check if the piece led to a win or is a draw, other wise let the ohter player play
         #connect 4 is turned bases
@@ -295,10 +299,10 @@ class Connect4Env:
             self.winner = piece
             if piece == MODEL_PIECE:
                 self.score[1]+=1
-                reward += 1.0
+                reward += 2.0
             else:
                 self.score[0] += 1
-                reward += -1.0
+                reward += -2.0
         elif self.isDraw():
             self.done = True
             self.winner=None
@@ -540,12 +544,17 @@ if __name__ == "__main__":
 
             # ---------- LOGGING every 100 episodes (asked chat for some print) ----------
             if episodes % 100 == 0:
-                #SMART_MOVE = not SMART_MOVE
+                SMART_MOVE = not SMART_MOVE
                 win_rate_100 = np.mean(point_results[-100:]) * 100 if len(point_results) >= 100 else 0
                 print(f"Points: {len(point_results)} | Score CPU={env.score[0]} Agent={env.score[1]} | "
                       f"Win% (last 100): {win_rate_100:.1f}%")
-                agent.save_model(MODEL_TRAIN_NAME)
-                print("Checkpoint saved.")
+                win_rate_100 = np.mean(point_results[-100:]) * 100
+                if win_rate_100 >= 85:  # Stop when win rate hits 75%
+                    agent.save_model(MODEL_FINAL_NAME)
+                    print(f"Target win rate reached! Stopping at episode {episodes}")
+                    sys.exit()
+            
+             
     except KeyboardInterrupt:
         print("\nSaving final model and exiting...")
         agent.save_model(MODEL_FINAL_NAME)

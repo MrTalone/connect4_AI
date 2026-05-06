@@ -14,7 +14,7 @@ class Connect4Agent:
         self.prev_state = None
 
         self.model = self.build_model()
-        self.optimizer = tf.keras.optimizers.Adam(learning_rate=1e-4)
+        self.optimizer = tf.keras.optimizers.Adam(learning_rate=3e-5)
         print(20*"-")
         if weights_path and os.path.exists(weights_path):
             try:
@@ -30,7 +30,7 @@ class Connect4Agent:
             Input(shape=(self.state_size,)),
             #Reshape((4,ROWS,COLUMNS)),
             Reshape((ROWS, COLUMNS, 4)),
-            
+            Conv2D(32, 3, activation='relu',padding= 'same'),  # 19 -> 8
             Conv2D(32, 3, activation='relu'),  
             Conv2D(64,3,activation='relu'),
 
@@ -76,13 +76,17 @@ class Connect4Agent:
 
         valid_probs = probs[valid_indices]
 
+
         # renormalize
         if np.sum(valid_probs) == 0:
             valid_probs = np.ones_like(valid_probs) / len(valid_probs)
+            #action = np.random.choice(valid_indices, p=valid_probs)
         else:
             valid_probs = valid_probs / np.sum(valid_probs)
-
+            #action = valid_indices[np.argmax(valid_probs)]
+        
         action = np.random.choice(valid_indices, p=valid_probs)
+
         return action
 
     def training_step(self, states, actions, rewards):
@@ -99,16 +103,16 @@ class Connect4Agent:
             probs = self.model(states, training=True)
             selected_probs = tf.reduce_sum(probs * actions_onehot, axis=1)
             log_probs = tf.math.log(selected_probs + 1e-8)
-            loss = -tf.reduce_mean(log_probs * rewards)
-            #policy_loss = -tf.reduce_mean(log_probs * rewards)
+            #loss = -tf.reduce_mean(log_probs * rewards)
+            policy_loss = -tf.reduce_mean(log_probs * rewards)
             
-            #  # --- Entropy bonus (encourage exploration) ---
-            # entropy = -tf.reduce_mean(
-            #     tf.reduce_sum(probs * tf.math.log(probs+ 1e-8), axis=1)
-            # )
+             # --- Entropy bonus (encourage exploration) ---
+            entropy = tf.reduce_mean(
+                tf.reduce_sum(probs * tf.math.log(probs+ 1e-8), axis=1)
+            )
 
-            # # Final loss
-            # loss = policy_loss - .01 * entropy
+            # Final loss
+            loss = policy_loss - .05 * entropy
 
         grads = tape.gradient(loss, self.model.trainable_variables)
         self.optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
