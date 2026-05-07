@@ -30,6 +30,7 @@ This project supports:
 
 - `connect4_ai.py`	 |	 Main game loop, environment, rendering, training	 |	
 - `connect4_agent.py` | Neural network agent and RL training logic |
+- `connect4.py`		|	Basic connect 4 game to play with friends |
 
 ------------------------------------------------------------------
 
