@@ -1,6 +1,10 @@
+#used in connect4_ai.py
+#followed cs-421 pong nn
+#creates a model to be ran on connect 4 using CNN, DENSE, and RL
+
 import tensorflow as tf
 import numpy as np
-from tensorflow.keras.layers import Dense, Input, Dropout, Reshape, Conv2D, Flatten
+from tensorflow.keras.layers import Dense, Input, Dropout, Reshape, Conv2D, Flatten,BatchNormalization
 import os
 
 
@@ -14,7 +18,9 @@ class Connect4Agent:
         self.prev_state = None
 
         self.model = self.build_model()
-        self.optimizer = tf.keras.optimizers.Adam(learning_rate=2e-4)
+        self.optimizer = tf.keras.optimizers.Adam(learning_rate=4e-4)
+        
+        #LOAD PREV WEIGHTS
         print(20*"-")
         if weights_path and os.path.exists(weights_path):
             try:
@@ -25,17 +31,24 @@ class Connect4Agent:
         else:
             print("Agent: no existing weights, creating new model")
 
+    #BUILD CNN MODEL FOR RL
     def build_model(self):
         return tf.keras.Sequential([
             Input(shape=(3, ROWS, COLUMNS)),
             #Reshape((4,ROWS,COLUMNS)),
 
-            Conv2D(32, 5, activation='relu',padding='same'),  
+            Conv2D(32, 5, activation='relu',padding='same'),
+            BatchNormalization(),  
             Conv2D(64, 3, activation='relu',padding='same'),
+            BatchNormalization(),
             Conv2D(128,3,activation='relu',padding='same'),
+            BatchNormalization(),
 
             Flatten(),
+            Dense(256,activation='relu'),
+            Dropout(0.3),
             Dense(128, activation='relu'),
+            Dropout(0.3),
             Dense(self.num_actions,activation='softmax')
         ])
         # return tf.keras.Sequential([
@@ -51,15 +64,18 @@ class Connect4Agent:
         #     ])
     
     
+    #USE PROBABILITY TO SUGGEST STRONGEST COL ACTION
+    def get_action(self,state,valid_moves,deterministic = False):
+        state_input = np.expand_dims(state, axis=0)  
 
-    def get_action(self,state,valid_moves):
-        state_input = np.expand_dims(state, axis=0)        
+        #state difference      
         # if self.prev_state is None:
         #     x = np.zeros_like(state)
         # else:
         #     x = state - self.prev_state
 
         # self.prev_state = state
+
 
         probs = self.model(state_input, training=False).numpy()[0]
 
@@ -71,6 +87,7 @@ class Connect4Agent:
 
         valid_indices = np.where(mask == 1)[0]
 
+        #no abaible moves available
         if len(valid_indices) == 0:
             # fallback (should never happen)
             action = np.random.randint(self.num_actions)
@@ -78,19 +95,29 @@ class Connect4Agent:
 
         valid_probs = probs[valid_indices]
 
-
+        valid_probs = np.round(valid_probs, 4) 
         # renormalize
-        if np.sum(valid_probs) == 0:
+        prob_sum = np.sum(valid_probs)
+        if prob_sum == 0:
             valid_probs = np.ones_like(valid_probs) / len(valid_probs)
             #action = np.random.choice(valid_indices, p=valid_probs)
         else:
-            valid_probs = valid_probs / np.sum(valid_probs)
+            valid_probs = valid_probs / prob_sum
             #action = valid_indices[np.argmax(valid_probs)]
+               
+        #print(valid_probs)
         
+
         action = np.random.choice(valid_indices, p=valid_probs)
+        
+
 
         return action
 
+    #training the model
+    #use states batch from connect4_ai
+    #use actions batch from connect4_ai
+    #use discount rewards of each episode from connect4_ai
     def training_step(self, states, actions, rewards):
         if len(states) == 0:
             return None
@@ -114,10 +141,11 @@ class Connect4Agent:
             )
 
             # Final loss
-            loss = policy_loss - 0.2 * entropy
+            loss = policy_loss - 0.5 * entropy
 
         grads = tape.gradient(loss, self.model.trainable_variables)
         #help from explosion of loss
+        #gradient clipping -> prevnt unstable learning and large gradients-> now to max 1
         grads = [tf.clip_by_norm(g, 1.0) for g in grads]
         self.optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
         return loss.numpy()
