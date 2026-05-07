@@ -8,7 +8,9 @@ import numpy as np
 import pygame
 import sys
 import math
-from connect4_agent import Connect4Agent
+from connect4_agent import Connect4Agent as Connect4Agent_trainer
+from connect4_agent import Connect4Agent as Connect4Agent_self_play
+
 MODEL_TRAIN_NAME = "Talon_Connect4.weights.h5"
 MODEL_FINAL_NAME = "Talon_Connect4_Final.weights.h5"
 
@@ -28,6 +30,7 @@ RENDER_TEXT = False
 #board settings
 ROWS = 6
 COLUMNS=7
+MODEL_PLAYER_ID = 1
 PLAYER_PIECE = '+'
 MODEL_PIECE = '-'
 CONNECT = 4
@@ -43,7 +46,7 @@ SQUARE_SIZE = 100
 RADIUS = int(SQUARE_SIZE / 2 - 6)
 width = COLUMNS * SQUARE_SIZE
 height = (ROWS + 1) * SQUARE_SIZE
-
+BATCH_SIZE = 500
 # gameOver = False
 # userTurn = 0
 
@@ -57,9 +60,11 @@ def random_move(env):
         return np.random.choice(valid)
     else:
         return 0
+    
+    
 
 #discount rewards (from pong game)
-def discount_rewards(r, gamma=0.99):
+def discount_rewards(r, gamma=0.90):
     #Change Gamma to play with discounting
     #Yes its GAMMA lowercase!
     r = np.array(r, dtype=np.float32)
@@ -200,7 +205,7 @@ class Connect4Env:
 
     def reset(self):
         self.board = np.full((ROWS, COLUMNS), ' ')
-        self.current_player = np.random.randint(2)   # 0 = PLAYER_PIECE, 1 = MODEL_PIECE (agent) #randomply start with different players
+        self.current_player = 0   # 0 = PLAYER_PIECE, 1 = MODEL_PIECE (agent) #randomply start with different players
         self.done = False
         self.winner=None
         return self.get_state()
@@ -209,35 +214,33 @@ class Connect4Env:
 
     def get_state(self):
         #current player, opponent/model
-        #4 channels
+        #3 channels
         #   0 = player piece, 1 if filled, 0 otherwise
         #   1 = agent piece, 1 if filled, 0 otherwise
-        #   2 = whose turn it is, 1 player, 0 agent
-        #   3 = column height (seeing when a column is almost full)
+        #  2 = whose turn it is, 1 player, 0 agent
         #with addition row*collumn
-        #4*6*7 = 168 points per state
-        state = np.zeros((4,self.rows,self.cols),dtype = np.float32)
-        height_channel = np.zeros((ROWS, COLUMNS))
+        
+        state = np.zeros((3,self.rows,self.cols),dtype = np.float32)
         for r in range(self.rows):
             for c in range(self.cols):
 
-                if self.board[r][c] == self.piece_of_player(self.current_player):
+                if self.board[r][c] == PLAYER_PIECE:
                     state[0, r, c] = 1.0
-                elif self.board[r][c] == self.piece_of_player(1 - self.current_player):
+                elif self.board[r][c] == MODEL_PIECE:
                     state[1, r, c] = 1.0
-        state[2,:,:] = 1.0 if self.current_player == 0 else 0.0        
+        state[2,:,:] = 1.0 if self.current_player == MODEL_PLAYER_ID else 0.0
         
-        # Height channel: fill from bottom with 1s up to the current height
-        for c in range(self.cols):
-            height = 0
-            for r in range(self.rows):
-                if self.board[r][c] != ' ':
-                    height += 1
-            # Set the bottom 'height' cells to 1.0 (normalised height not needed because it's already 0..ROWS)
-            for r in range(height):
-                state[3, r, c] = 1.0
+        # # Height channel: fill from bottom with 1s up to the current height
+        # for c in range(self.cols):
+        #     height = 0
+        #     for r in range(self.rows):
+        #         if self.board[r][c] != ' ':
+        #             height += 1
+        #     # Set the bottom 'height' cells to 1.0 (normalised height not needed because it's already 0..ROWS)
+        #     for r in range(height):
+        #         state[3, r, c] = 1.0
         
-        return state.ravel()
+        return state
 
     def piece_of_player(self,player):
         if player == 0:
@@ -276,20 +279,17 @@ class Connect4Env:
 
         #let the agent find where to place a peice and place it
         row = self.get_open_row(action)
-        piece = self.piece_of_player(self.current_player)
+        piece = MODEL_PIECE if self.current_player == MODEL_PLAYER_ID else PLAYER_PIECE        
         self.board[row][action] = piece #place piece
 
         #piece = PLAYER_PIECE if self.current_player == 0 else MODEL_PIECE
         #dropPiece(self.board,row,action,piece)
         #check for threats
-        if not self.done and piece == MODEL_PIECE:
-            three = self.count_threats(piece,3)
-            two = self.count_threats(piece,2)
-            reward += three * 0.1 + two * 0.02
-        elif not self.done and piece == PLAYER_PIECE:
-            opponent_three = self.count_threats(piece, 3)
-            opponent_two = self.count_threats(piece, 2)
-            reward -= opponent_three * 0.15 + opponent_two * 0.03  # Penalty
+        if piece == MODEL_PIECE:
+            reward += 0.15 * self.count_threats(MODEL_PIECE, 3)
+        elif piece == PLAYER_PIECE:
+            reward -= 0.5 * self.count_threats(PLAYER_PIECE, 3)
+            reward -= 0.15 * self.count_threats(PLAYER_PIECE, 2)
 
         #check if the piece led to a win or is a draw, other wise let the ohter player play
         #connect 4 is turned bases
@@ -299,18 +299,18 @@ class Connect4Env:
             self.winner = piece
             if piece == MODEL_PIECE:
                 self.score[1]+=1
-                reward += 2.0
+                reward += 5.0
             else:
                 self.score[0] += 1
-                reward += -2.0
+                reward += -5.0
         elif self.isDraw():
             self.done = True
             self.winner=None
-            reward += 0.1#small reward for draw, better than loosing, worst than winning
+            reward = 0.1#small reward for draw, better than loosing, worst than winning
         else:
             #neither happened - game is still going
             self.current_player = 1 - self.current_player
-            reward += 0.0
+            reward = 0.0
 
         return self.get_state(), reward, self.done,self.winner
     
@@ -400,10 +400,17 @@ if __name__ == "__main__":
         #TRAINMODE = False
         RENDER = True
         RENDER_EACH_MOVE = True
-        agent = Connect4Agent(weights_path=MODEL_FINAL_NAME)
+        agent = Connect4Agent_trainer(weights_path=MODEL_FINAL_NAME)
         print("HUMAN VS AI MODE")
+    elif not TRAINMODE and not PLAYER:
+        RENDER = True
+        RENDER_EACH_MOVE = True
+        agent = Connect4Agent_trainer(weights_path=MODEL_FINAL_NAME)
+        print("random VS AI MODE")
     else:
-        agent = Connect4Agent(weights_path=MODEL_TRAIN_NAME)
+        agent = Connect4Agent_trainer(weights_path=MODEL_TRAIN_NAME)
+
+    agent_player = Connect4Agent_trainer(weights_path=MODEL_TRAIN_NAME)
 
     #_________ START RENDER ___________
     if RENDER:
@@ -418,16 +425,22 @@ if __name__ == "__main__":
 
     episodes = 0
     point_results = [] # store points for finding win percent 1 = agent win, 0 = loss/draw
-
+    states, actions, discounted_rewards = [], [], []
+    loss = 0
+    last_loss = 0 
     
-    try:
+    try:                
         while True:
             episodes += 1
             state = env.reset()
             done = False
+
+            episode_states = []
+            episode_actions = []
+            episode_rewards = []
+
             
-            if TRAINMODE:
-                states, actions, rewards = [], [], []
+            
             
             # ---------- GAME LOOP  ----------
             while not done:
@@ -444,7 +457,7 @@ if __name__ == "__main__":
                 valid_mask = [env.is_valid_move(c) for c in range(COLUMNS)] #for agent
                 valid_indices = [c for c in range(len(valid_mask)) if valid_mask[c]] #for players
                 
-                if env.current_player == 1:
+                if env.current_player == MODEL_PLAYER_ID:
                     action = agent.get_action(state, valid_mask)
                 else:#cpu or player
                     if PLAYER:
@@ -487,7 +500,7 @@ if __name__ == "__main__":
                             clock.tick(30) #30 frames a second
                     #self play against self
                     elif SMART_MOVE:
-                        action = agent.get_action(state, valid_mask)
+                        action = agent_player.get_action(state, valid_mask)
                     #select random valid move
                     else:
                         action = random_move(env)
@@ -501,9 +514,11 @@ if __name__ == "__main__":
                     pygame.time.wait(50) #wait a little bit
                 
                 if TRAINMODE:
-                    states.append(state)          # important: state, not next_state
-                    actions.append(int(action))
-                    rewards.append(float(reward))
+                    episode_states.append(state)
+                    episode_actions.append(int(action))
+                    episode_rewards.append(float(reward))
+
+                   
 
                 state = next_state
                 if RENDER_TEXT:
@@ -518,6 +533,35 @@ if __name__ == "__main__":
             if RENDER_TEXT:
                 printBoard(env.board)
 
+               
+
+            if TRAINMODE and len(episode_states) > 0:
+                # print(len(episode_states))
+                # Discount rewards for THIS episode only
+                discounted = discount_rewards(episode_rewards)
+                
+                # Store episode data (as flat lists, not nested!)
+                states.extend(episode_states)      # Extend, not append
+                actions.extend(episode_actions)    # Extend, not append
+                discounted_rewards.extend(discounted)  # Extend, not append
+                #print(states)
+                # Check if we have enough for a batch
+                if len(states) >= BATCH_SIZE:
+                    
+                    # Take first BATCH_SIZE samples
+                    batch_states = states[:BATCH_SIZE]
+                    batch_actions = actions[:BATCH_SIZE]
+                    batch_rewards = discounted_rewards[:BATCH_SIZE]
+                    
+                    # Train on batch
+                    loss = agent.training_step(batch_states, batch_actions, batch_rewards)
+                    last_loss = loss
+                    # Remove used samples (sliding window)
+                    states = states[BATCH_SIZE:]
+                    actions = actions[BATCH_SIZE:]
+                    discounted_rewards = discounted_rewards[BATCH_SIZE:]
+                else:
+                    loss = last_loss
             #store point for model for win rate
             if winner == MODEL_PIECE:
                 point_results.append(1)      # agent win
@@ -526,25 +570,29 @@ if __name__ == "__main__":
  
 
             # # AFTER episode ends
-            total_reward = sum(rewards)
+            #total_reward = sum(rewards)
 
-            if TRAINMODE and len(states) > 0:
-                # discount rewards (for future learning step)
-                discounted = discount_rewards(rewards)
-                loss=agent.training_step(states,actions,discounted)
+            
 
             # ---------- LOGGING every 10 episodes (asked chat for some print) ----------
-            if episodes % 10 == 0:
+            if episodes % 10 == 0 and TRAINMODE:
                 recent = point_results[-10:] if len(point_results) >= 10 else point_results
                 win_rate = np.mean(recent) * 100
                 total_wins = sum(point_results)
+                # Fixed: use episode_rewards for last episode's average
+                avg_reward_last_ep = np.mean(episode_rewards) if episode_rewards else 0
+                # Fixed: loss might not be defined yet
+                
                 print(f"Episode {episodes} | Score CPU={env.score[0]} Agent={env.score[1]} | "
-                      f"Win% (last 10): {win_rate:.1f}% | Total wins: {total_wins} |total rewards: {total_reward}|"
-                      f"Loss: {loss}")
+                    f"Win% (last 10): {win_rate:.1f}% | Total wins: {total_wins} | "
+                    f"Avg reward last ep: {avg_reward_last_ep:.3f} | Loss: {loss:.4f}")
 
             # ---------- LOGGING every 100 episodes (asked chat for some print) ----------
             if episodes % 100 == 0:
-                SMART_MOVE = not SMART_MOVE
+                # if TRAINMODE:
+                #     SMART_MOVE = not SMART_MOVE
+                #     agent_player.model.set_weights(agent.model.get_weights())
+                #     agent.save_model(MODEL_TRAIN_NAME)
                 win_rate_100 = np.mean(point_results[-100:]) * 100 if len(point_results) >= 100 else 0
                 print(f"Points: {len(point_results)} | Score CPU={env.score[0]} Agent={env.score[1]} | "
                       f"Win% (last 100): {win_rate_100:.1f}%")
