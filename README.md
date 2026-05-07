@@ -35,6 +35,7 @@ This project supports:
 # Requirements
 
 Install the required libraries:
+ `pip install numpy pygame tensorflow `
 
 ------------------------------------------------------------------
 
